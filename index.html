@@ -443,6 +443,9 @@ const FIREBASE_CONFIG = {
   appId:             "1:911402141410:web:0edccf152ff2fde47880bb"
 };
 // ══════════════════════════════════════════════════════════
+// ⚠️ ВАЖНО: Добавь свой GitHub Pages домен в Firebase Console:
+//   Authentication → Settings → Authorized domains → Add domain
+//   Формат: твой-ник.github.io
 
 // Правила Firestore (скопируй в Rules своего проекта):
 /*
@@ -628,11 +631,13 @@ window.doRegister = async function(){
   const btn = document.getElementById('regBtn');
   btn.disabled=true; btn.innerHTML='<div class="spinner"></div>';
 
-  // check username unique
-  const uSnap = await getDoc(doc(db,'usernames',username));
-  if(uSnap.exists()){ btn.disabled=false; btn.textContent='Зарегистрироваться'; return err('Username уже занят.'); }
-
   try {
+    // check username unique
+    const uSnap = await getDoc(doc(db,'usernames',username));
+    if(uSnap.exists()){
+      btn.disabled=false; btn.textContent='Зарегистрироваться';
+      return err('Username уже занят.');
+    }
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     const uid  = cred.user.uid;
     await setDoc(doc(db,'users',uid), { uid, username, email, createdAt: serverTimestamp() });
@@ -640,7 +645,9 @@ window.doRegister = async function(){
     showAuthError('reg','');
   } catch(e) {
     btn.disabled=false; btn.textContent='Зарегистрироваться';
-    err(firebaseErrorRu(e.code));
+    console.error('Register error:', e);
+    const msg = e.code ? firebaseErrorRu(e.code) : ('Ошибка: ' + e.message);
+    err(msg);
   }
 };
 
@@ -657,7 +664,9 @@ window.doLogin = async function(){
     showAuthError('login','');
   } catch(e) {
     btn.disabled=false; btn.textContent='Войти';
-    showAuthError('login', firebaseErrorRu(e.code));
+    console.error('Login error:', e);
+    const msg = e.code ? firebaseErrorRu(e.code) : ('Ошибка: ' + e.message);
+    showAuthError('login', msg);
   }
 };
 

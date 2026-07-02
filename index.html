@@ -837,31 +837,37 @@ window.startChatByUsername = async function(){
   const btn = document.getElementById('startChatBtn');
   btn.disabled=true; btn.innerHTML='<div class="spinner"></div>';
 
-  const uSnap = await getDoc(doc(db,'usernames',username));
-  if(!uSnap.exists()){
-    btn.disabled=false; btn.textContent='Написать';
-    showEl('newChatError','Пользователь @'+username+' не найден.');
-    return;
-  }
-  const otherUid = uSnap.data().uid;
-  const cid = chatId(currentUser.uid, otherUid);
+  try {
+    const uSnap = await getDoc(doc(db,'usernames',username));
+    if(!uSnap.exists()){
+      btn.disabled=false; btn.textContent='Написать';
+      showEl('newChatError','Пользователь @'+username+' не найден.');
+      return;
+    }
+    const otherUid = uSnap.data().uid;
+    const cid = chatId(currentUser.uid, otherUid);
 
-  const chatSnap = await getDoc(doc(db,'chats',cid));
-  if(!chatSnap.exists()){
-    await setDoc(doc(db,'chats',cid), {
-      members: [currentUser.uid, otherUid],
-      memberNames: {
-        [currentUser.uid]: currentProfile.username,
-        [otherUid]: username
-      },
-      createdAt: serverTimestamp(),
-      lastText: '',
-      lastAt: serverTimestamp()
-    });
+    const chatSnap = await getDoc(doc(db,'chats',cid));
+    if(!chatSnap.exists()){
+      await setDoc(doc(db,'chats',cid), {
+        members: [currentUser.uid, otherUid],
+        memberNames: {
+          [currentUser.uid]: currentProfile.username,
+          [otherUid]: username
+        },
+        createdAt: serverTimestamp(),
+        lastText: '',
+        lastAt: serverTimestamp()
+      });
+    }
+    btn.disabled=false; btn.textContent='Написать';
+    document.getElementById('newChatUsername').value='';
+    openChat(cid, username, otherUid);
+  } catch(e) {
+    btn.disabled=false; btn.textContent='Написать';
+    console.error('startChat error:', e);
+    showEl('newChatError', 'Ошибка: ' + (e.message || e.code));
   }
-  btn.disabled=false; btn.textContent='Написать';
-  document.getElementById('newChatUsername').value='';
-  openChat(cid, username);
 };
 
 window.openChat = async function(cid, name, otherId){

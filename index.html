@@ -847,8 +847,16 @@ window.startChatByUsername = async function(){
     const otherUid = uSnap.data().uid;
     const cid = chatId(currentUser.uid, otherUid);
 
-    const chatSnap = await getDoc(doc(db,'chats',cid));
-    if(!chatSnap.exists()){
+    // Try to read chat — if it doesn't exist, permission-denied is expected
+    let chatExists = false;
+    try {
+      const chatSnap = await getDoc(doc(db,'chats',cid));
+      chatExists = chatSnap.exists();
+    } catch(readErr) {
+      chatExists = false; // chat doesn't exist yet — will create below
+    }
+
+    if(!chatExists){
       await setDoc(doc(db,'chats',cid), {
         members: [currentUser.uid, otherUid],
         memberNames: {

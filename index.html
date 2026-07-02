@@ -541,6 +541,7 @@ let localGroups = [
   {id:'g3',name:'Разработка Mint chat',joined:false,owned:false},
 ];
 let localContacts = [];
+let avatarCache = {}; // uid -> base64 or null
 
 // ── Auth state ────────────────────────────────────────────
 if (fbReady) {
@@ -675,6 +676,7 @@ window.doLogout = async function(){
   if(unsubMessages){ unsubMessages(); unsubMessages=null; }
   if(unsubChatList){ unsubChatList(); unsubChatList=null; }
   activeChatId = null;
+  avatarCache = {};
   await signOut(auth);
 };
 
@@ -700,9 +702,26 @@ function renderProfile(){
     drawerName.textContent   = uname;
     drawerStatus.textContent = 'В сети';
     const av = initials(uname);
-    headerAvatar.textContent = av;
-    document.getElementById('bigAvatar').textContent = av;
-    drawerAvatar.textContent = av;
+    const avatarSrc = currentProfile.avatarBase64 || null;
+    // header avatar
+    if(avatarSrc){
+      headerAvatar.innerHTML = '<img src="'+avatarSrc+'" alt="av">';
+    } else {
+      headerAvatar.textContent = av;
+    }
+    // big avatar on profile page
+    const bigAv = document.getElementById('bigAvatar');
+    if(avatarSrc){
+      bigAv.innerHTML = '<img src="'+avatarSrc+'" alt="av" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+    } else {
+      bigAv.textContent = av;
+    }
+    // drawer avatar
+    if(avatarSrc){
+      drawerAvatar.innerHTML = '<img src="'+avatarSrc+'" alt="av" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+    } else {
+      drawerAvatar.textContent = av;
+    }
   } else {
     authBlock.style.display='block';
     profileBlock.style.display='none';
@@ -713,9 +732,42 @@ function renderProfile(){
   }
 }
 
-window.onAvatarChosen = function(e){
-  // Avatar upload would require Firebase Storage — shows placeholder for now
-  alert('Загрузка аватаров требует Firebase Storage. Добавь его в проект!');
+window.onAvatarChosen = async function(e){
+  if(!currentUser) return;
+  const file = e.target.files[0];
+  if(!file) return;
+  if(file.size > 512 * 1024){
+    alert('Картинка слишком большая. Выбери до 512 КБ.');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    // Compress to max 200px
+    const img = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement('canvas');
+      const max = 200;
+      let w = img.width, h = img.height;
+      if(w > max || h > max){
+        if(w > h){ h = Math.round(h * max / w); w = max; }
+        else      { w = Math.round(w * max / h); h = max; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const base64 = canvas.toDataURL('image/jpeg', 0.8);
+      // Save to Firestore
+      try {
+        await updateDoc(doc(db,'users',currentUser.uid), { avatarBase64: base64 });
+        currentProfile.avatarBase64 = base64;
+        renderProfile();
+      } catch(err) {
+        console.error('Avatar save error:', err);
+        alert('Ошибка сохранения аватарки: ' + err.message);
+      }
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
 };
 
 // ── Chats ─────────────────────────────────────────────────
@@ -742,19 +794,37 @@ function renderChatList(chats){
     list.innerHTML='<div class="empty-hint">У вас пока нет чатов</div>';
     return;
   }
+  // Render first with initials, then patch avatars async
   list.innerHTML = chats.map(c=>{
     const otherId   = c.members.find(m=>m!==currentUser.uid);
     const otherName = c.memberNames?.[otherId] || otherId;
     const lastText  = c.lastText || 'Нет сообщений';
     const isActive  = activeChatId === c.id;
-    return `<div class="list-item" style="cursor:pointer;${isActive?'border-color:var(--accent-soft);':''}" onclick="openChat('${c.id}','${escapeHtml(otherName)}')">
-      <div class="mini-avatar">${initials(otherName)}</div>
+    const avHtml = avatarCache[otherId]
+      ? `<img src="${avatarCache[otherId]}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+      : initials(otherName);
+    return `<div class="list-item" style="cursor:pointer;${isActive?'border-color:var(--accent-soft);':''}" onclick="openChat('${c.id}','${escapeHtml(otherName)}','${otherId}')">
+      <div class="mini-avatar" id="cla-${otherId}">${avHtml}</div>
       <div class="meta">
         <div class="name">${escapeHtml(otherName)}</div>
         <div class="sub">${escapeHtml(lastText)}</div>
       </div>
     </div>`;
   }).join('');
+  // Load avatars for those not cached
+  chats.forEach(async c => {
+    const otherId = c.members.find(m=>m!==currentUser.uid);
+    if(otherId && !(otherId in avatarCache)){
+      try {
+        const snap = await getDoc(doc(db,'users',otherId));
+        avatarCache[otherId] = snap.exists() ? (snap.data().avatarBase64 || null) : null;
+        const el = document.getElementById('cla-'+otherId);
+        if(el && avatarCache[otherId]){
+          el.innerHTML = `<img src="${avatarCache[otherId]}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+        }
+      } catch(e){ avatarCache[otherId] = null; }
+    }
+  });
 }
 
 window.startChatByUsername = async function(){
@@ -794,14 +864,28 @@ window.startChatByUsername = async function(){
   openChat(cid, username);
 };
 
-window.openChat = function(cid, name){
+window.openChat = async function(cid, name, otherId){
   activeChatId = cid;
   document.getElementById('chatPlaceholder').style.display='none';
   const win = document.getElementById('chatWindow');
   win.style.display='flex';
   win.classList.add('active-mobile');
-  document.getElementById('cwAvatar').textContent = initials(name||'?');
-  document.getElementById('cwName').textContent   = name||'—';
+  const cwAv = document.getElementById('cwAvatar');
+  // Show initials first
+  cwAv.textContent = initials(name||'?');
+  document.getElementById('cwName').textContent = name||'—';
+  // Load avatar
+  if(otherId){
+    if(!(otherId in avatarCache)){
+      try {
+        const snap = await getDoc(doc(db,'users',otherId));
+        avatarCache[otherId] = snap.exists() ? (snap.data().avatarBase64 || null) : null;
+      } catch(e){ avatarCache[otherId] = null; }
+    }
+    if(avatarCache[otherId]){
+      cwAv.innerHTML = `<img src="${avatarCache[otherId]}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+    }
+  }
   document.getElementById('cwMessages').innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:12px;padding:20px">Загрузка…</div>';
   if(unsubMessages){ unsubMessages(); unsubMessages=null; }
   const q = query(
